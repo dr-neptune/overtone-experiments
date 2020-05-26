@@ -1,0 +1,707 @@
+* Getting Started 
+
+#+BEGIN_SRC clojure
+(ns overtone.examples.getting-started.basic
+  (:use overtone.live))
+#+END_SRC
+
+#+BEGIN_SRC clojure
+(defsynth foo
+  [freq 200 dur 0.5]
+  (let [src (saw [freq (* freq 1.01) (* 0.99 freq)])
+        low (sin-osc (/ freq 2))
+        filt (lpf src (line:kr (* 10 freq) freq 10))
+        env (env-gen (perc 0.1 dur) :action FREE)]
+    (out 0 (pan2 (* 0.8 low env filt)))))
+
+(foo 440)
+
+(defn foo-pause
+  []
+  (dotimes [i 10]
+    (foo (* i 220) 1)
+    (Thread/sleep 300)))
+
+(foo-pause)
+
+; make sure sounds are triggered exactly on time
+(defn foo-timed
+  []
+  (let [n (now)]
+    (dotimes [i 10]
+      (at (+ n (* i 300))
+          (foo (* i 220) 1)))))
+
+(foo-timed)
+#+END_SRC
+
+A simple pad sound using definst rather than defsynth will automatically take the enclosing synth and send it to the bus. 
+
+#+BEGIN_SRC clojure
+(definst overpad
+  [note 60 amp 0.7 attack 0.001 release 2]
+  (let [freq (midicps note)
+        env (env-gen (perc attack release) :action FREE)
+        f-env (+ freq (* 3 freq (env-gen (perc 0.012 (- release 0.1)))))
+        bfreq (/ freq 2)
+        sig (apply +
+                   (concat (* 0.7 (sin-osc [bfreq (* 0.99 bfreq)]))
+                           (lpf (saw [freq (* freq 1.01)]) f-env)))]
+    (* amp env sig)))
+
+(overpad 41 :attack 10 :release 20)
+
+(def metro (metronome 128))
+
+(definst kick
+  []
+  (let [src (sin-osc 80)
+        env (env-gen (perc 0.001 0.3) :action FREE)]
+    (* 0.7 src env)))
+
+(kick)
+
+(defn player
+  [beat notes]
+  (let [notes (if (empty? notes)
+                [50 55 53 50]
+                notes)]
+    (at (metro beat)
+        (kick))
+    (at (metro beat)
+        (if (zero? (mod beat 5))
+          (overpad (+ 24 (choose notes))
+                   0.2 0.75 0.005)))
+    (at (metro (+ 0.5 beat))
+        (if (zero? (mod beat 6))
+          (overpad (+ 12 (choose notes)) 0.5 0.15 0.1)
+          (overpad (choose notes) 0.5 0.15 0.1))))
+  (apply-by (metro (inc beat)) #'player (inc beat) (next notes) []))
+
+(player (metro) [])
+
+(stop)
+
+(defn play-notes
+  [t beat-dur notes attacks]
+  (when notes
+    (let [note (+ 12 (first notes))
+          attack (first attacks)
+          amp 0.5
+          release 0.1
+          next-beat (+ t beat-dur)]
+      (at t (overpad note amp attack release))
+      (apply-by next-beat #'play-notes next-beat beat-dur (next notes) (next attacks) []))))
+
+(play-notes (now) 425 (cycle [40 42 44 45 47 49 51 52]) (repeat 0.4))
+(play-notes (now) 300 (scale :c4 :major) (repeat 0.5))
+(play-notes (now) 300 (take 15 (cycle [40 42 44 45 47 49 51 52])) (repeat 0.3))
+(play-notes (now) 100 (take 50 (cycle (scale :a4 :minor))) (repeat 0.4))
+(stop)
+#+END_SRC
+
+Inspired by "How do I play a chord" from impromptu website 
+
+#+BEGIN_SRC clojure
+(defn chord-notes
+  []
+  [(choose [58 60 60 62])
+   (choose [62 63 63 65])
+   (choose [65 67 68 70])])
+
+(def metro (metronome 70))
+
+(defn play-chords
+  [b]
+  (let [tick (* 2 (choose [125 500 250 250 500 250 500 250]))
+        next-beat (inc b)]
+    (at (metro b)
+        (doseq [note (map #(- % 12) (chord-notes))]
+          (overpad note 0.3 (/ tick 1020))))
+    (apply-by (metro next-beat) #'play-chords [next-beat])))
+
+(play-chords (metro))
+(metro-bpm metro 120)
+(stop)
+#+END_SRC
+
+You can load samples from freesound.org using their ID number:
+
+Not working :/ 
+
+#+BEGIN_SRC clojure
+(def kick-d (freesound 41155))
+
+(defn looper [t dur notes]
+  (at t (kick-d))
+  (at (+ t 350) (doseq [note (chord-notes)] (overpad (first notes) 0.3 0.1)))
+  (at t (overpad (- (first notes) 36) 0.3 (/ dur 1000)))
+  (apply-by (+ t dur) #'looper (+ t dur) dur (next notes) []))
+
+(looper (now) 500 (cycle [60 67 65 72 75 70]))
+;;(stop)
+#+END_SRC
+
+#+BEGIN_SRC clojure
+(defsynth pedestrian-crossing
+  "Street crossing in Britain"
+  [out-bus 0]
+  (out out-bus (pan2 (* 0.2
+                        (sin-osc 2500)
+                        (lf-pulse 5)))))
+
+(pedestrian-crossing)
+(stop)
+#+END_SRC
+
+
+#+BEGIN_SRC clojure
+(definst trancy-waves
+  []
+  (* 0.2
+     (+ (sin-osc 200)
+        (saw 200)
+        (saw 203)
+        (sin-osc 400))))
+
+(def metro (metronome 70))
+
+(trancy-waves)
+(stop)
+#+END_SRC
+
+A noise filter, using the mouse to control the bandpass 
+
+It seems that mouse.x and mouse.y don't work for me in org mode. 
+
+#+BEGIN_SRC clojure
+(demo 10
+      (bpf (* [0.5 0.5] (pink-noise))
+           (mouse-y 10 10000)
+           (mouse-x 0.0001 0.9999)))
+#+END_SRC
+
+#+BEGIN_SRC clojure
+(defsynth roaming-sines
+  []
+  (let [freqs (take 5 (repeatedly #(ranged-rand 40 2000)))
+        ampmod [(mouse-x 0 1) (mouse-y 1 0)]
+        snd (splay (* 0.5 (sin-osc freqs)))
+        snd (* (sin-osc ampmod) snd)]
+    (out 0 snd)))
+
+(roaming-sines)
+(stop)
+#+END_SRC
+
+Below also doesn't work 
+
+#+BEGIN_SRC clojure
+(defsynth scratch-pendulum []
+  (let [kon (sin-osc:kr (* 10 (mouse-x)))
+        k2 (sin-osc:kr (* 5 (mouse-x)))
+        lpk (lin-lin:kr kon -1 1 0 1000)
+        foo (poll:kr (impulse:kr 20) lpk)
+        src (lpf (white-noise) lpk)
+        src (pan2 src k2)
+        bak (* 0.5 (lpf (white-noise)))]
+    (out 0 (+ src [bak bak]))))
+
+(scratch-pendulum)
+;;(stop)
+
+#+END_SRC
+
+Below works 
+
+The functions representing UGens support multi-channel expansion. If we pass a collection of N arguments
+where a single value is expected, then N instances of the UGen will be created, each using the successive values.
+
+#+BEGIN_SRC clojure
+(definst dial-tone [freq-a 350 freq-b 440]
+  (apply + (* (sin-osc [freq-a freq-b]) 0.2)))
+
+(dial-tone)
+(stop)
+#+END_SRC
+
+Synths can also communicate back to us. Here we use the send-trig UGen which sends a "/tr" message every time it 
+gets an input trigger.
+
+#+BEGIN_SRC clojure
+(defsynth trigger-finger []
+  (send-trig:kr (impulse:kr 0.2) 200 (num-output-buses)))
+
+(on-event "/tr" #(println "trigger: " %) ::trigger-test)
+(trigger-finger)
+(stop)
+#+END_SRC
+
+#+BEGIN_SRC clojure
+(defsynth dtest []
+  (send-trig:kr (impulse:kr 2) 1 (demand:kr (impulse:kr 0.5) 1 (dwhite))))
+
+(dtest)
+(stop)
+#+END_SRC
+
+#+BEGIN_SRC clojure
+(defsynth adder [a 1 b 2]
+  (let [v1 (- a b)
+        v2 (- b a)
+        sum (+ a b)
+        product (* a b)]
+    (send-trig:kr v1 201 sum)
+    (send-trig:kr v2 202 product)))
+
+(adder)
+#+END_SRC
+
+#+BEGIN_SRC clojure
+(defsynth external-input [out-bus 0]
+  (out out-bus (in (num-output-buses:ir))))
+#+END_SRC
+
+#+BEGIN_SRC clojure
+(definst ticker [freq 2]
+  (* (sin-osc 440)
+     (env-gen (perc 0.1 0.2) (sin-osc:kr freq))))
+
+(ticker)
+(stop)
+
+(definst sizzle
+  [amp 0.4 depth 10 freq 220 lfo 8]
+  (* amp (saw (+ freq (* depth (sin-osc:kr lfo))))))
+
+(metro-bpm metro 60)
+(sizzle)
+(stop)
+(ctl sizzle :depth 100 :lfo 0.5)
+#+END_SRC
+
+Its typical to use a pulse as a sort of on off switch like this 
+
+#+BEGIN_SRC clojure
+(defsynth line-two [bus 0]
+  (let [sig (lf-pulse 1/6 0 0.25)]
+    (out 0 (* 0.5 (sin-osc [480 440])
+              (lag sig)))))
+
+(line-two)
+(stop)
+#+END_SRC
+
+#+BEGIN_SRC clojure
+(definst busy-signal []
+  (let [on-off (lag (lf-pulse 2) 0.1)]
+    (* 0.2 (apply + (* (sin-osc [480 620]) on-off)))))
+
+(busy-signal)
+(stop)
+
+;; Need to make a call?
+(def DTMF-TONES {1  [697, 1209]
+                 2  [770, 1209]
+                 3  [852, 1209]
+                 4  [697, 1336]
+                 5  [770, 1336]
+                 6  [852, 1336]
+                 7  [697, 1477]
+                 8  [770, 1477]
+                 9  [852, 1477]
+                 \* [697, 1633]
+                 0  [770, 1633]
+                 \# [852, 1633]})
+
+(definst dtmf [freq-a 770 freq-b 1633 gate 1]
+  (let [sig (* 0.2 (+ (sin-osc freq-a) (sin-osc freq-b)))
+        env (env-gen (asr 0.001 1 0.001) gate 1 0 1 FREE)]
+    (* sig env)))
+
+(defn dial-number [num-seq]
+  (loop [t (now)
+         nums num-seq]
+    (when nums
+      (let [t-on  (+ t 160 (rand-int 200))
+            t-off (+ t-on 160 (rand-int 80))
+            [a b] (get DTMF-TONES (first nums))]
+        (at t-on (dtmf a b))
+        (at t-off (ctl dtmf :gate 0))
+        (recur t-off (next nums))))))
+
+;; Try this:
+(dial-number [0 6 2 1 2 2 4 2 9 8])
+#+END_SRC
+
+#+BEGIN_SRC clojure
+(definst done-trigger []
+  (let [line (line:kr 1 0 2)]
+    (* 0.1 (+ (* line (sin-osc 440)) (* (done line) (white-noise))))))
+
+(done-trigger)
+(stop)
+#+END_SRC
+
+
+#+BEGIN_SRC clojure
+(demo 60
+      (let [bpm     120
+            ;; create pool of notes as seed for random base line sequence
+            notes   [40 41 28 28 28 27 25 35 78]
+            ;; create an impulse trigger firing once per bar
+            trig    (impulse:kr (/ bpm 120))
+            ;; create frequency generator for a randomly picked note
+            freq    (midicps (lag (demand trig 0 (dxrand notes INF)) 0.25))
+            ;; switch note durations
+            swr     (demand trig 0 (dseq [1 6 6 2 1 2 4 8 3 3] INF))
+            ;; create a sweep curve for filter below
+            sweep   (lin-exp (lf-tri swr) -1 1 40 3000)
+            ;; create a slightly detuned stereo sawtooth oscillator
+            wob     (mix (saw (* freq [0.99 1.01])))
+            ;; apply low pass filter using sweep curve to control cutoff freq
+            wob     (lpf wob sweep)
+            ;; normalize to 80% volume
+            wob     (* 0.8 (normalizer wob))
+            ;; apply band pass filter with resonance at 5kHz
+            wob     (+ wob (bpf wob 1500 2))
+            ;; mix in 20% reverb
+            wob     (+ wob (* 0.2 (g-verb wob 9 0.7 0.7)))
+
+            ;; create impulse generator from given drum pattern
+            kickenv (decay (t2a (demand (impulse:kr (/ bpm 30)) 0 (dseq [1 0 0 0 0 0 1 0 1 0 0 1 0 0 0 0] INF))) 0.7)
+            ;; use modulated sine wave oscillator
+            kick    (* (* kickenv 7) (sin-osc (+ 40 (* kickenv kickenv kickenv 200))))
+            ;; clip at max volume to create distortion
+            kick    (clip2 kick 1)
+
+            ;; snare is just using gated & over-amplified pink noise
+            snare   (* 3 (pink-noise) (apply + (* (decay (impulse (/ bpm 240) 0.5) [0.4 2]) [1 0.05])))
+            ;; send through band pass filter with peak @ 2kHz
+            snare   (+ snare (bpf (* 4 snare) 2000))
+            ;; also clip at max vol to distort
+            snare   (clip2 snare 1)]
+   ;; mixdown & clip
+   (clip2 (+ wob kick snare) 1)))
+(stop)
+#+END_SRC
+
+#+BEGIN_SRC clojure
+(ns overtone.examples.compositions.euclidean-rhythms
+  (:use overtone.live)
+  (:require [overtone.algo.euclidean-rhythm :refer [euclidean-rhythm]]))
+
+(def metro (metronome 200))
+
+(definst sine-blip [freq 400]
+  (let [snd (sin-osc freq)
+        env (env-gen (perc 0.02 0.7) :action FREE)]
+    (* 0.2 env (sin-osc freq))))
+
+(defn player [m num r sound]
+  (at (m num)
+      (if (= 1 (first r))
+        (sound)
+        ))
+  (apply-at (m (inc num)) #'player [m (inc num) (next r) sound]))
+
+(def notes (vec (map (comp midi->hz note) [:c3 :g3 :d3])))
+
+(player metro (metro) (cycle (euclidean-rhythm 3 8)) (partial sine-blip (notes 0)))
+(player metro (metro) (cycle (euclidean-rhythm 4 4)) (partial sine-blip (notes 1)))
+(player metro (metro) (cycle (euclidean-rhythm 5 13)) (partial sine-blip (notes 2)))
+
+(stop)
+#+END_SRC
+
+#+BEGIN_SRC clojure
+(ns ^:hw overtone.examples.compositions.jazz
+  (:use [overtone.live]
+        [overtone.inst.drum]
+        [overtone.inst.synth]
+        [overtone.examples.compositions.rotater]))
+
+(remove-event-handler :breakbeat-handler)
+
+;; just a simple example of a synth
+;; we'll use this together with the bass
+(definst beep [note 60]
+  (let
+      [src (sin-osc (midicps note))
+       env (env-gen (perc 0.01 0.9) :action FREE)]
+    (* src env)))
+
+;; drums
+(def ride (sample (freesound-path 436)))
+
+(def cymbal (sample (freesound-path 13254)))
+
+(def snap (sample (freesound-path 87731)))
+
+;; swing
+(defn offnote? [time]
+  (= (mod time 1 ) 0.5))
+
+(defn swing [time]
+  (if (offnote? time)
+    (+ time 0.2)
+    time))
+
+(def tempo 160)
+
+(def metro (metronome tempo))
+
+(defn play-bar [bar-beat bar]
+  (doseq [hit (bar)]
+    (let [hit-time (swing (first hit))
+          instr (second hit)]
+      (at (metro (+ bar-beat hit-time))
+        (instr)))))
+
+(defn loop-play [bar len]
+  (let [beat (metro)]
+    (play-bar beat bar)
+    (apply-by (metro (+ len beat)) #'loop-play [bar len])))
+
+(def length 4)
+
+(defn jazzdrums
+  []
+  ;; filter out all nils
+  (filter #(not (nil? %))
+          (concat
+           ;; ride on every beat
+           (map (fn [t] [t ride]) (range 0 length))
+           ;; off-beat ride
+           (map #(when (< (rand) 0.3) [% ride]) (range 0.5 length))
+
+           ;; snaps on every other beat
+           ;; the snaps are a bit late, subtract a bit to get them on time
+           (map (fn [t] [(- t 0.02) snap]) (range 1 length 2))
+
+           ;; off-beat snare once in a while
+           (map #(when (< (rand) 0.1) [% snare]) (range 0.5 length))
+
+           ;; 'hit' consisting of cymbal+kick at some random off-beat
+           ;; doing it this way allows us to place two drums on same beat
+           (when (< (rand) 0.1)
+             (let [t (+ 0.5 (rand-int length))]
+               (list [t kick] [t cymbal])))
+           )))
+
+(defn limit [n minimum maximum]
+  (max minimum
+       (min maximum n)))
+
+(def jazz-intervals '(-7 -6 -5 5 6 7))
+(def maxbass 40)
+(def minbass 65)
+
+
+(defn jazzbass
+  ([] (let [start-note 45
+            beat (metro)
+            next-even (if (zero? (mod beat 2))
+                        beat
+                        (inc beat))]
+        (apply-by (metro next-even) #'jazzbass [start-note])))
+  ([n]
+     (let [beat (metro)
+           tick (metro beat)
+           note (if (not (zero? (mod beat 2)))
+                  ;; just go half a step down
+                  (dec n)
+                  ;; keep tone inside interval
+                  ;; TODO - avoid hanging around at the limits
+                  (limit (+ n (rand-nth jazz-intervals)) maxbass minbass))]
+       (at tick
+         (beep note)
+         (bass (midi->hz note)))
+       ;; extra off-beat note with same tone
+       (when (> 0.1 (rand))
+         (at (metro (+ beat (swing 0.5)) )
+           (beep note)
+           (bass (midi->hz note))))
+       (apply-by (metro (+ beat 1)) #'jazzbass [note]))))
+
+
+;; Set up rotater
+
+(def device-filter [ :midi-device "Novation DMS Ltd" "Launchpad" "Launchpad"])
+
+(on-event (conj device-filter :note-on)
+          (fn [e]
+            (rotater e 0))
+          :handle-rotate-on)
+
+(on-event (conj device-filter :note-off)
+          (fn [e]
+            (rotater e 0))
+          :handle-rotate-off)
+
+(defn rotater-hit [note vel len]
+  (let [start (+ 1 (metro))]
+   (do
+     (at (metro start)
+       (rotater-on note vel))
+     (apply-by
+      (metro (+ len start))
+      #'rotater-off [note]))))
+
+(defn stab []
+  (let [note (rand-nth (range 56 67))
+        vel (rand-nth (range 10 80 5))
+        len (rand-nth (range 0.05 0.3 0.05))
+        interval (rand-nth [4])]
+    (map #(rotater-hit % vel len) (list note (+ note interval)))))
+
+;; Place cursor at the end of these expressions
+;; and do C-x e to execute them
+
+;; Play drums
+(loop-play #'jazzdrums length)
+
+;; Play bass
+(jazzbass)
+
+;; Play some pno!
+;; currently, this sends out midi, so you'll have to
+;; connect something at the other end ;-)
+;; Check the synth-out def in rotater.clj
+(stab)
+
+(stop)
+
+;; TODO - a way of ensuring that we start drums+bass at (zero? (mod beat 4))
+
+
+;; TODO - some way to go to double tempo - the one below turns music into noise!
+(metro :bpm (* 2 tempo))
+
+;; And back to music!
+(metro :bpm tempo)
+#+END_SRC
+
+#+BEGIN_SRC clojure
+(ns overtone.examples.compositions.clapping-music
+  (:use overtone.live))
+
+(def clap (freesound 48310))
+(def clap2 (freesound 132676))
+(clap)
+;(clap2)
+
+(def pattern-1 [1 1 1 0 1 1 0 1 0 1 1 0])
+(def pattern-2 [1 1 1 0 1 1 0 1 0 1 1 0])
+
+(defn my-cycle []
+  (def pattern-2 (let [e (last pattern-2)
+                       p (drop-last pattern-2)]
+                   (vec (conj p e)))))
+
+(def m (metronome 32))
+
+(defn play-beat [beat]
+  (dorun (map (fn [i]
+                (let [v (if (= 0 (mod i 3)) 1 0.5)]
+                  (when (= (pattern-1 i) 1)
+                    (at (m (+ (/ i 12.0) beat)) (clap 1 0 0 (* v 0.33))))
+                  (when (= (pattern-2 i) 1)
+                    (at (m (+ (/ i 12.0) beat)) (clap2 1 0 0 v)))))
+              (range 12))))
+
+(defn player [beat]
+  (when (= (mod beat 4) 0) (my-cycle))
+  (play-beat beat)
+  (apply-by (m (inc beat)) #'player (inc beat) []))
+
+(player (m))
+;;(stop)
+#+END_SRC
+
+#+BEGIN_SRC clojure
+(defn freesound-sample
+  "Download, cache and persist the freesound audio file specified by
+   id. Creates a buffer containing the sample loaded onto the server and
+   returns a playable sample capable of playing the sample when called
+   as a fn."
+  [id & args]
+  (let [path      (freesound-path id)
+        smpl      (apply samp/load-sample path args)
+        free-smpl (assoc smpl :freesound-id id) ]
+    (map->FreesoundSample free-smpl)))
+
+(def debug-path (overtone.samples.freesound/freesound 117490))
+(def debug-sample (apply overtone.sc.sample/load-sample debug-path))
+(def debug-freesound-sample (assoc debug-sample :freesound-id id))
+(def debug-return (overtone.samples.freesound/map->FreesoundSample free-smpl))
+#+END_SRC
+
+
+#+BEGIN_SRC clojure
+(ns overtone.examples.compositions.extemp-piano
+  (:use [overtone.live]
+        [overtone.inst synth sampled-piano]))
+
+;; This example has been translated from the Extempore code demonstrated in
+;; http://vimeo.com/21956071 (found around the 10 minute mark)
+
+;; Original Extempore code:
+;; (load-sampler sampler "/home/andrew/Documents/samples/piano")
+;; (define scale (pc:scale 0 'aeolian))
+;; (define loop
+;;   (lambda (beat dur root)
+;;      (for-each (lambda (p offset)
+;;                   (play (+ offset) sampler p 100 (* 2.0 dur)))
+;;                (pc:make-chord 40 (cosr 75 10 1/32) 5
+;;                               (pc:chord root (if (member root '(10 8))
+;;                                                '^7
+;;                                                '-7)))
+;;                '(1/3 1 3/2 1 2 3))
+;;      (callback (*metro* (+ beat (* 0.5 dur))) 'loop (+ dur beat)
+;;                dur
+;;                (if (member root '(0 8))
+;;                  (random '(2 7 10))
+;;                  (random '(0 8))))))
+
+(def chord-prog
+  [#{[2 :minor7] [7 :minor7] [10 :major7]}
+   #{[0 :minor7] [8 :major7]}])
+
+(def beat-offsets [0 0.1 0.2 1/3  0.7 0.9])
+
+(def metro (metronome 20))
+
+(def root 40)
+(def max-range 35)
+(def range-variation 10)
+(def range-period 8)
+
+(defn beat-loop
+  [metro beat chord-idx]
+  (let [[tonic chord-name] (choose (seq (nth chord-prog chord-idx)))
+        nxt-chord-idx      (mod (inc chord-idx) (count chord-prog))
+        note-range         (cosr beat range-variation  max-range range-period)
+        notes-to-play      (rand-chord (+ root tonic)
+                                       chord-name
+                                       (count beat-offsets)
+                                       note-range)]
+    (dorun
+     (map (fn [note offset]
+            (at (metro (+ beat offset)) (sampled-piano note 0.3)))
+          notes-to-play
+          beat-offsets))
+    (apply-by (metro (inc beat)) #'beat-loop [metro (inc beat) nxt-chord-idx])))
+
+;;start the music:
+(beat-loop metro (metro) 0)
+
+;;try changing the beat-offsets on the fly
+;(def beat-offsets [0 0.2 1/3  0.5 0.8])
+;(def beat-offsets [0 0.2 0.4  0.6 0.8])
+;(def beat-offsets [0 0.1 0.2  0.3 0.4])
+;(def beat-offsets [0 0.1 0.11 0.13 0.15 0.17 0.2 0.4 0.5 0.55 0.6 0.8])
+
+;;to stop call (stop)
+;(stop)
+#+END_SRC
